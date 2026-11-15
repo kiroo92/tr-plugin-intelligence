@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -705,5 +706,91 @@ func TestHistoryIsCappedAtSixty(t *testing.T) {
 	}
 	if view.PassRate == nil || *view.PassRate != 100 {
 		t.Fatalf("pass rate = %v", view.PassRate)
+	}
+}
+
+// TestAdminGroupsListsMultipliersAndModels checks the catalogue that fills the
+// configuration form: group identity, billing multiplier, and model options.
+func TestAdminGroupsListsMultipliersAndModels(t *testing.T) {
+	fixture := newFixture(t, strings.Repeat("k", masterKeyMinLength))
+	fixture.groups = []groupInfo{
+		{ID: 12, Name: "default", RateMultiplier: 1},
+		{ID: 31, Name: "claude 专线", RateMultiplier: 1.35},
+	}
+	fixture.plugin.modelsLookup = func(context.Context) ([]byte, error) {
+		return []byte(`{"code":0,"data":[
+			{"id":12,"name":"default","models":[
+				{"id":"gpt-6-astra","display_name":"GPT-6 Astra"},
+				{"id":"claude-fable-5-2","display_name":""}
+			]},
+			{"id":99,"name":"private","models":[{"id":"secret-model","display_name":"Secret"}]}
+		]}`), nil
+	}
+	response := fixture.request(t, http.MethodGet, "/admin/groups", nil, adminCaller())
+	if response.Code != http.StatusOK {
+		t.Fatalf("groups = %d %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Groups []catalogGroup `json:"groups"`
+	}
+	decode(t, response, &body)
+	if len(body.Groups) != 2 {
+		t.Fatalf("returned %d groups, want the caller's two", len(body.Groups))
+	}
+	first := body.Groups[0]
+	if first.ID != 12 || first.Name != "default" || first.RateMultiplier != 1 {
+		t.Fatalf("first group = %+v", first)
+	}
+	if len(first.Models) != 2 {
+		t.Fatalf("first group lists %d models", len(first.Models))
+	}
+	// A missing display name falls back to the identifier.
+	if first.Models[1].Name != "claude-fable-5-2" {
+		t.Fatalf("fallback name = %q", first.Models[1].Name)
+	}
+	if body.Groups[1].RateMultiplier != 1.35 {
+		t.Fatalf("second multiplier = %v", body.Groups[1].RateMultiplier)
+	}
+	// A group outside the caller's authorization never appears, even when the
+	// marketplace lists it.
+	for _, group := range body.Groups {
+		if group.ID == 99 {
+			t.Fatal("an unauthorized group leaked into the catalogue")
+		}
+	}
+	// The second group has no marketplace entry, so its model list stays empty
+	// rather than absent.
+	if body.Groups[1].Models == nil || len(body.Groups[1].Models) != 0 {
+		t.Fatalf("second group models = %v, want an empty list", body.Groups[1].Models)
+	}
+}
+
+// TestAdminGroupsSurvivesMarketplaceFailure checks that a catalogue read failure
+// still returns the groups so manual model entry stays available.
+func TestAdminGroupsSurvivesMarketplaceFailure(t *testing.T) {
+	fixture := newFixture(t, strings.Repeat("k", masterKeyMinLength))
+	fixture.groups = []groupInfo{{ID: 12, Name: "default", RateMultiplier: 1}}
+	fixture.plugin.modelsLookup = func(context.Context) ([]byte, error) {
+		return nil, errors.New("marketplace unavailable")
+	}
+	response := fixture.request(t, http.MethodGet, "/admin/groups", nil, adminCaller())
+	if response.Code != http.StatusOK {
+		t.Fatalf("groups = %d", response.Code)
+	}
+	var body struct {
+		Groups []catalogGroup `json:"groups"`
+	}
+	decode(t, response, &body)
+	if len(body.Groups) != 1 || len(body.Groups[0].Models) != 0 {
+		t.Fatalf("groups = %+v", body.Groups)
+	}
+}
+
+// TestAdminGroupsRejectsUsers checks the audience check on the catalogue route.
+func TestAdminGroupsRejectsUsers(t *testing.T) {
+	fixture := newFixture(t, strings.Repeat("k", masterKeyMinLength))
+	response := fixture.request(t, http.MethodGet, "/admin/groups", nil, userCaller())
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("user catalogue read = %d", response.Code)
 	}
 }

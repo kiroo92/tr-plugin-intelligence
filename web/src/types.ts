@@ -60,6 +60,20 @@ export interface ConfigView {
   rate_multiplier: number
 }
 
+/** CatalogModel is one requestable model identifier offered by a group. */
+export interface CatalogModel {
+  id: string
+  name: string
+}
+
+/** CatalogGroup is a visible group with its multiplier and listed models. */
+export interface CatalogGroup {
+  id: number
+  name: string
+  rate_multiplier: number
+  models: CatalogModel[]
+}
+
 export interface AdminList {
   enabled: boolean
   master_key_set: boolean

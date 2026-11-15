@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "kiroo92.intelligence",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "apiVersion": 1,
   "minHostVersion": "0.7.3",
   "name": {
@@ -61,6 +61,13 @@
       {
         "method": "GET",
         "path": "/admin/runs/*",
+        "auth": "admin",
+        "maxBodyBytes": 0,
+        "timeoutSeconds": 60
+      },
+      {
+        "method": "GET",
+        "path": "/admin/groups",
         "auth": "admin",
         "maxBodyBytes": 0,
         "timeoutSeconds": 60

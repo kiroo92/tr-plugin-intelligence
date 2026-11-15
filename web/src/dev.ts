@@ -41,6 +41,16 @@ const views = configs.map((config, index) => ({
 configureMock(async (method, path) => {
   if (path === '/admin/configs') return { enabled: true, master_key_set: true, configs: views }
   if (path === '/admin/settings') return { enabled: true, master_key_set: true }
+  if (path === '/admin/groups') return { groups: [
+    { id: 12, name: 'default', rate_multiplier: 1, models: [
+      { id: 'gpt-6-astra', name: 'GPT-6 Astra' },
+      { id: 'claude-fable-5-2', name: 'Claude Fable 5.2' },
+      { id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5' },
+    ] },
+    { id: 31, name: 'claude 专线', rate_multiplier: 1.35, models: [
+      { id: 'claude-fable-5-2', name: 'Claude Fable 5.2' },
+    ] },
+  ] }
   if (path === '/tests') return { groups: [{ id: 12, name: 'default', rate_multiplier: 1, configs: views.slice(0, 2) }] }
   if (path.startsWith('/admin/runs/')) return { run: history[0], html: '<!doctype html><html><body>本地预览作品</body></html>' }
   if (path.startsWith('/runs/')) return { run: history[0], html: '<!doctype html><html><body>本地预览作品</body></html>' }

@@ -27,6 +27,7 @@ var panelRoutes = []string{
 	"DELETE /admin/configs/",
 	"POST /admin/actions/",
 	"GET /admin/runs/",
+	"GET /admin/groups",
 	"GET /admin/settings",
 	"PUT /admin/settings",
 	"GET /tests",
@@ -73,6 +74,8 @@ func (plugin *Plugin) serve(writer http.ResponseWriter, request *http.Request) {
 		plugin.adminAction(ctx, writer, request, caller, strings.TrimPrefix(path, "/admin/actions/"))
 	case strings.HasPrefix(path, "/admin/runs/"):
 		plugin.runDetail(ctx, writer, caller, strings.TrimPrefix(path, "/admin/runs/"), true)
+	case path == "/admin/groups" && request.Method == http.MethodGet:
+		plugin.adminGroups(ctx, writer, caller)
 	case path == "/admin/settings" && request.Method == http.MethodGet:
 		plugin.adminGetSettings(ctx, writer)
 	case path == "/admin/settings" && request.Method == http.MethodPut:
@@ -612,6 +615,103 @@ func (plugin *Plugin) hostGroups(ctx context.Context, userID int64) ([]groupInfo
 		groups = append(groups, groupInfo{ID: group.GetId(), Name: name, RateMultiplier: group.GetRateMultiplier()})
 	}
 	return groups, nil
+}
+
+// catalogGroup is one group with the models its marketplace entry lists.
+type catalogGroup struct {
+	ID             int64          `json:"id"`
+	Name           string         `json:"name"`
+	RateMultiplier float64        `json:"rate_multiplier"`
+	Models         []catalogModel `json:"models"`
+}
+
+// catalogModel is one requestable model identifier offered by a group.
+type catalogModel struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// marketplaceEnvelope mirrors the public marketplace response the host forwards.
+// Only the group identity and its model identifiers are read.
+type marketplaceEnvelope struct {
+	Data []struct {
+		ID     int64 `json:"id"`
+		Models []struct {
+			ID          string `json:"id"`
+			DisplayName string `json:"display_name"`
+		} `json:"models"`
+	} `json:"data"`
+}
+
+// adminGroups lists the caller's visible groups with their rate multipliers and
+// model identifiers, so the configuration form can offer selections instead of
+// free-text identifiers. A marketplace read failure still returns the groups
+// with empty model lists, which keeps manual entry available.
+func (plugin *Plugin) adminGroups(ctx context.Context, writer http.ResponseWriter, caller sdk.Caller) {
+	groups, err := plugin.groupsFor(ctx, caller.UserID)
+	if err != nil {
+		writeFailure(writer, err)
+		return
+	}
+	models := plugin.modelsByGroup(ctx)
+	result := make([]catalogGroup, 0, len(groups))
+	for _, group := range groups {
+		entry := catalogGroup{
+			ID:             group.ID,
+			Name:           group.Name,
+			RateMultiplier: group.RateMultiplier,
+			Models:         models[group.ID],
+		}
+		if entry.Models == nil {
+			entry.Models = []catalogModel{}
+		}
+		result = append(result, entry)
+	}
+	sdk.WriteJSON(writer, http.StatusOK, map[string]any{"groups": result})
+}
+
+// modelsByGroup reads the public marketplace catalogue and indexes its model
+// identifiers by group. Failures yield an empty index rather than an error,
+// because the marketplace only covers public groups.
+func (plugin *Plugin) modelsByGroup(ctx context.Context) map[int64][]catalogModel {
+	indexed := make(map[int64][]catalogModel)
+	lookup := plugin.modelsLookup
+	if lookup == nil {
+		return indexed
+	}
+	raw, err := lookup(ctx)
+	if err != nil || len(raw) == 0 {
+		return indexed
+	}
+	var envelope marketplaceEnvelope
+	if json.Unmarshal(raw, &envelope) != nil {
+		return indexed
+	}
+	for _, group := range envelope.Data {
+		models := make([]catalogModel, 0, len(group.Models))
+		for _, model := range group.Models {
+			if model.ID == "" {
+				continue
+			}
+			name := model.DisplayName
+			if name == "" {
+				name = model.ID
+			}
+			models = append(models, catalogModel{ID: model.ID, Name: name})
+		}
+		if len(models) > 0 {
+			indexed[group.ID] = models
+		}
+	}
+	return indexed
+}
+
+// hostModels reads the public marketplace catalogue through the host.
+func (plugin *Plugin) hostModels(ctx context.Context) ([]byte, error) {
+	if plugin.env == nil || plugin.env.Host == nil {
+		return nil, errors.New("宿主能力不可用")
+	}
+	return plugin.env.Host.Catalog.Models(ctx)
 }
 
 // groupName resolves the display name stored with a configuration. The host

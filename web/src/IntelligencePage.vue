@@ -4,8 +4,8 @@ import { TrButton, useHost } from '@tokenflux/tokenrouter-plugin-sdk'
 import HistoryStrip from './HistoryStrip.vue'
 import {
   active as isActive, benchmarkLabel, judged, observationTime, phaseLabel, verdictLabel, verdictTone,
-  type AdminList, type ConfigInput, type ConfigView, type Run, type RunDetail, type Settings,
-  type UserTests,
+  type AdminList, type CatalogGroup, type ConfigInput, type ConfigView, type Run, type RunDetail,
+  type Settings, type UserTests,
 } from './types'
 
 // The page follows the upstream layout: one card per routing group, a fixed
@@ -33,6 +33,18 @@ const runs = ref<Run[]>([])
 const form = ref<ConfigInput & { id: number; key_set: boolean }>(blankForm())
 const detail = ref<Run>()
 const documentSource = ref('')
+
+// catalogue holds the caller's visible groups with their multipliers and the
+// model identifiers each public group lists. It fills the configuration form.
+const catalog = ref<CatalogGroup[]>([])
+const catalogLoading = ref(false)
+const catalogError = ref('')
+
+// selectedModels lists the identifiers offered for the chosen group.
+const selectedModels = computed(() => {
+  const group = catalog.value.find(item => item.id === form.value.group_id)
+  return group?.models ?? []
+})
 
 function blankForm(): ConfigInput & { id: number; key_set: boolean } {
   return {
@@ -275,7 +287,38 @@ function openConfig(view?: ConfigView, groupId?: number): void {
   }
   dialog.kind = 'config'
   dialog.configId = view?.config.id ?? 0
+  void loadCatalog()
   show('config')
+}
+
+// loadCatalog reads the visible groups and their model identifiers. A failure
+// leaves the form usable through manual entry, with the reason shown inline.
+async function loadCatalog(): Promise<void> {
+  if (catalog.value.length) return
+  catalogLoading.value = true
+  catalogError.value = ''
+  try {
+    const response = await host.request<{ groups: CatalogGroup[] }>('GET', '/admin/groups', {
+      signal: controller.signal,
+    })
+    catalog.value = response.groups ?? []
+  } catch (error) {
+    catalogError.value = '无法读取分组列表，请手动填写编号与名称。'
+    if (!controller.signal.aborted) failure.value = errorText(error)
+  } finally {
+    catalogLoading.value = false
+  }
+}
+
+// selectGroup applies the chosen group's identity and clears an incompatible
+// model so a stale identifier cannot be saved against another group.
+function selectGroup(value: string): void {
+  const id = Number(value)
+  const group = catalog.value.find(item => item.id === id)
+  if (!group) return
+  if (form.value.group_id !== id) form.value.model = ''
+  form.value.group_id = group.id
+  form.value.group_name = group.name
 }
 
 function useCurrentOrigin(): void {
@@ -631,20 +674,17 @@ onBeforeUnmount(() => {
       <div class="in-dialog-body">
         <div class="in-two">
           <label class="in-field">
-            <span>分组编号</span>
-            <input v-model.number="form.group_id" type="number" min="1" :disabled="!!form.id" required>
-            <em>取宿主分组列表中的编号；账号不可见的分组请一并填写名称。</em>
-          </label>
-          <label class="in-field">
-            <span>分组名称</span>
-            <input v-model="form.group_name" maxlength="60" :disabled="!!form.id" placeholder="例如 default">
-          </label>
-        </div>
-        <div class="in-two">
-          <label class="in-field">
-            <span>模型标识</span>
-            <input v-model="form.model" maxlength="256" :disabled="!!form.id" placeholder="例如 gpt-6-astra" required>
-            <em>与网关请求中的 model 完全一致。</em>
+            <span>分组 <em v-if="!form.id && catalogLoading" style="margin:0">读取中…</em></span>
+            <select :value="form.group_id" :disabled="!!form.id || catalogLoading" required @change="selectGroup(($event.target as HTMLSelectElement).value)">
+              <option :value="0" disabled>请选择分组</option>
+              <option v-for="group in catalog" :key="group.id" :value="group.id">
+                {{ group.name }} · {{ group.rate_multiplier }}×（#{{ group.id }}）
+              </option>
+              <option v-if="form.id && !catalog.some(group => group.id === form.group_id)" :value="form.group_id">
+                {{ form.group_name }}（#{{ form.group_id }}）
+              </option>
+            </select>
+            <em>{{ catalogError || '来自宿主的分组授权；倍率是当前账号的实际计费倍率。' }}</em>
           </label>
           <label class="in-field">
             <span>测试类型</span>
@@ -655,6 +695,35 @@ onBeforeUnmount(() => {
             <em>{{ form.benchmark === 'candy' ? '抽屉原理应用题，答案 21；仅 Responses 协议。' : '生成单文件 HTML 动画，再由评价服务判定。' }}</em>
           </label>
         </div>
+        <label class="in-field">
+          <span>模型标识 <em v-if="!form.id && selectedModels.length" style="margin:0">该分组 {{ selectedModels.length }} 个可选</em></span>
+          <input
+            v-model="form.model"
+            list="intel-model-options"
+            maxlength="256"
+            :disabled="!!form.id"
+            placeholder="选择或直接填写模型标识"
+            required
+          >
+          <datalist id="intel-model-options">
+            <option v-for="model in selectedModels" :key="model.id" :value="model.id">{{ model.name }}</option>
+          </datalist>
+          <div v-if="!form.id && selectedModels.length" class="in-model-options">
+            <button
+              v-for="model in selectedModels"
+              :key="model.id"
+              type="button"
+              class="in-model-option"
+              :class="{ selected: form.model === model.id }"
+              :title="model.name"
+              @click="form.model = model.id"
+            >{{ model.id }}</button>
+          </div>
+          <em v-if="form.group_id && !selectedModels.length">
+            该分组没有公开模型可选项（仅公开分组会出现在模型广场），请直接填写与网关请求一致的 model。
+          </em>
+          <em v-else>与网关请求中的 model 完全一致；列表来自模型广场的公开分组。</em>
+        </label>
         <label class="in-field">
           <span>Base URL <TrButton @click="useCurrentOrigin">使用当前网站</TrButton></span>
           <input v-model="form.base_url" type="url" maxlength="2048" placeholder="https://your-site/v1" required>

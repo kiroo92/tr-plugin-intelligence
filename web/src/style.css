@@ -231,3 +231,18 @@ button.in-slot:hover, button.in-slot:focus-visible { transform: scaleY(1.18); }
 @media (prefers-reduced-motion: reduce) {
   .in-spin { animation: none; }
 }
+
+/* Selectable model identifiers for the chosen group. A datalist covers typing;
+   these chips keep the same options visible where a native list does not open. */
+.in-model-options { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 7px; }
+.in-model-option {
+  max-width: 100%; padding: 3px 9px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--in-line); background: var(--in-muted); color: var(--in-sub);
+  font-size: 11.5px; overflow-wrap: anywhere; text-align: left;
+}
+.in-model-option:hover { border-color: color-mix(in srgb, var(--in-brand) 40%, var(--in-line)); color: var(--in-text); }
+.in-model-option.selected {
+  color: var(--in-accent); font-weight: 600;
+  border-color: color-mix(in srgb, var(--in-brand) 45%, transparent);
+  background: color-mix(in srgb, var(--in-brand) 10%, var(--in-bg));
+}

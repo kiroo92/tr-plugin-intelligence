@@ -39,6 +39,9 @@ type Plugin struct {
 	// groupsLookup reads the caller's visible groups. Init installs the host
 	// implementation; tests substitute a deterministic fixture.
 	groupsLookup func(context.Context, int64) ([]groupInfo, error)
+	// modelsLookup reads the public marketplace catalogue for the group form.
+	// Init installs the host implementation; tests substitute a fixture.
+	modelsLookup func(context.Context) ([]byte, error)
 	// baseURLPolicy validates a saved gateway URL before a chargeable request.
 	// Init installs the public-address check; tests may relax it for fixtures.
 	baseURLPolicy func(context.Context, string) (string, error)
@@ -124,6 +127,7 @@ func (plugin *Plugin) Init(ctx context.Context, env *sdk.Env) error {
 	plugin.db = database
 	plugin.env = env
 	plugin.groupsLookup = plugin.hostGroups
+	plugin.modelsLookup = plugin.hostModels
 	plugin.baseURLPolicy = plugin.resolvePolicy
 	plugin.mu.Unlock()
 
