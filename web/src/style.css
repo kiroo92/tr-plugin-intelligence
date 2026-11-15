@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Intelligence plugin styles.
+   style.css styles the intelligence plugin's group cards, dialogs, and results.
    Brand, surface, and status colors come from the host through --tr-*
    variables so the panel follows the active theme. The layout follows the
    upstream page: a group card per routing group, a fixed model column beside
@@ -79,11 +79,14 @@
 .in-obs.is-active .in-obs-body { background: color-mix(in srgb, var(--in-brand) 4%, transparent); }
 
 /* artwork cell keeps the upstream 4:3 ratio */
-.in-art { width: 84px; aspect-ratio: 4 / 3; border: 1px solid var(--in-line); border-radius: 7px; background: var(--in-muted); display: grid; place-items: center; overflow: hidden; }
+.in-art { position: relative; width: 84px; aspect-ratio: 4 / 3; border: 1px solid var(--in-line); border-radius: 7px; background: var(--in-muted); display: grid; place-items: center; overflow: hidden; }
 .in-art.empty { border-style: dashed; color: var(--in-sub); }
-.in-art button { all: unset; width: 100%; height: 100%; display: grid; place-items: center; cursor: zoom-in; }
-.in-art .in-art-tag { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; color: var(--in-accent); }
+.in-art button { all: unset; position: absolute; inset: 0; width: 100%; height: 100%; display: grid; place-items: center; cursor: zoom-in; }
 .in-art svg { width: 100%; height: 100%; display: block; }
+/* Thumbnail frames use a desktop viewport scaled into their button. Pointer
+   and keyboard activation belong to that button so the entire artwork opens detail.
+   Absolute containment keeps the full desktop frame from enlarging the grid cell. */
+.in-artwork-thumbnail { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; pointer-events: none; }
 
 .in-verdict { min-width: 0; }
 .in-verdict-label { font-size: 10.5px; color: var(--in-sub); margin-bottom: 5px; }
@@ -111,6 +114,7 @@ button.in-slot { cursor: pointer; }
 button.in-slot:hover, button.in-slot:focus-visible { transform: scaleY(1.18); }
 
 .in-row-actions { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.in-row-diagnostic { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--in-warn); font-size: 12px; overflow-wrap: anywhere; }
 
 /* ---------- legend ---------- */
 
@@ -182,7 +186,7 @@ button.in-slot:hover, button.in-slot:focus-visible { transform: scaleY(1.18); }
 .in-kv dd { margin: 3px 0 0; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 .in-runs { border: 1px solid var(--in-line); border-radius: 9px; overflow: hidden; }
-.in-run { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 9px 11px; border-bottom: 1px solid var(--in-line); font-size: 12px; }
+.in-run { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 9px 11px; border-bottom: 1px solid var(--in-line); font-size: 12px; }
 .in-run:last-child { border-bottom: 0; }
 .in-run b { display: block; font-weight: 600; font-size: 12px; overflow-wrap: anywhere; }
 .in-run span { font-size: 10.5px; color: var(--in-sub); }
@@ -191,6 +195,10 @@ button.in-slot:hover, button.in-slot:focus-visible { transform: scaleY(1.18); }
 .in-prompt { padding: 10px 12px; border-radius: 8px; background: var(--in-muted); border: 1px solid var(--in-line); font-size: 11.5px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 180px; overflow: auto; }
 .in-preview { border: 1px solid var(--in-line); border-radius: 10px; background: var(--in-muted); padding: 10px; display: grid; place-items: center; min-height: 180px; }
 .in-preview svg { width: min(100%, 420px); height: auto; display: block; }
+
+/* The complete document owns its viewport inside an opaque iframe. Its height
+   follows the dialog's available screen space while keeping small artwork usable. */
+.in-html-preview { display: block; width: 100%; height: min(60vh, 560px); min-height: 280px; border: 1px solid var(--in-line); border-radius: 10px; background: #fff; }
 
 /* centered hover preview for history slots */
 .in-hover { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 95; width: min(520px, calc(100vw - 40px)); padding: 12px 14px; border-radius: 12px; border: 1px solid var(--in-line); background: var(--in-bg); color: var(--in-text); font-size: 12px; box-shadow: 0 24px 70px rgb(15 30 45 / 0.28); pointer-events: none; }
@@ -212,7 +220,7 @@ button.in-slot:hover, button.in-slot:focus-visible { transform: scaleY(1.18); }
   .in-obs-body { grid-template-columns: 72px minmax(0, 1fr) auto; gap: 12px; padding: 12px 14px; }
   .in-obs-body > .in-verdict { grid-column: 2; }
   .in-obs-body > .in-time { grid-column: 3; text-align: right; }
-  .in-history-wrap, .in-row-actions { grid-column: 1 / -1; }
+  .in-history-panel, .in-row-actions { grid-column: 1 / -1; }
   .in-art { width: 72px; grid-row: span 2; }
   .in-head { align-items: flex-start; }
 }
@@ -226,6 +234,10 @@ button.in-slot:hover, button.in-slot:focus-visible { transform: scaleY(1.18); }
   .in-config { padding: 12px; }
   .in-dialog-foot { flex-wrap: wrap; }
   .in-strip { gap: 1px; }
+  .in-row-diagnostic { flex-wrap: wrap; }
+  .in-run { grid-template-columns: auto minmax(0, 1fr); }
+  .in-run .in-run-stat { grid-column: 2; text-align: left; }
+  .in-run > button { grid-column: 2; justify-self: start; }
 }
 
 @media (prefers-reduced-motion: reduce) {

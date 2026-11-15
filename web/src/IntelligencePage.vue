@@ -2,16 +2,26 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { TrButton, useHost } from '@tokenflux/tokenrouter-plugin-sdk'
 import HistoryStrip from './HistoryStrip.vue'
+import HtmlPreview from './HtmlPreview.vue'
+import ArtworkThumbnail from './ArtworkThumbnail.vue'
 import {
   active as isActive, benchmarkLabel, judged, observationTime, phaseLabel, verdictLabel, verdictTone,
   type AdminList, type CatalogGroup, type ConfigInput, type ConfigView, type Run, type RunDetail,
   type Settings, type UserTests,
 } from './types'
 
-// The page follows the upstream layout: one card per routing group, a fixed
+// IntelligencePage.vue displays model checks in one card per routing group, a fixed
 // model column beside each model's observation rows, and a sixty-slot result
 // strip per benchmark. The administrator page adds configuration actions; the
-// user page stays read-only.
+// user page stays read-only. Administrator history includes execution diagnostics,
+// while the result strips contain definite quality judgments. Saved artwork opens
+// in an isolated HTML preview with a separate source view.
+//
+// One page owns its requests and refresh timer. Dialog reads share the busy
+// guard so only one detail or history read starts at a time. Closing a dialog
+// clears its selected artwork and removes the preview frame.
+// Teardown aborts requests and stops polling, and a response arriving after abort
+// cannot reopen a dialog belonging to the removed page.
 
 const host = useHost()
 const admin = computed(() => host.route.value.pageId === 'admin')
@@ -33,6 +43,9 @@ const runs = ref<Run[]>([])
 const form = ref<ConfigInput & { id: number; key_set: boolean }>(blankForm())
 const detail = ref<Run>()
 const documentSource = ref('')
+// artworkView selects rendering or escaped source for the currently loaded
+// document; every detail read resets it so the next artwork starts in preview.
+const artworkView = ref<'preview' | 'source'>('preview')
 
 // catalogue holds the caller's visible groups with their multipliers and the
 // model identifiers each public group lists. It fills the configuration form.
@@ -219,9 +232,28 @@ function phaseText(run?: Run): string {
   return run ? phaseLabel[run.phase] ?? '检测中' : ''
 }
 
+// historyMessage describes the most useful result or diagnostic for one observation.
+// Reported errors take priority; active work shows its phase, and completed work
+// uses its assessment explanation or the label for its actual verdict.
+function historyMessage(entry: Run): string {
+  if (entry.error_message) return entry.error_message
+  if (isActive(entry)) return phaseText(entry)
+  if (entry.verdict === 'error') return '执行异常'
+  if (entry.verdict === 'unknown') return '评价缺失或无法判定'
+  return entry.assessment_reason || verdictLabel[entry.verdict]
+}
+
 // verdictOf reports the plate shown beside a row's last judged result.
 function verdictOf(view: ConfigView): keyof typeof verdictLabel {
   return view.latest_judged?.verdict ?? 'unknown'
+}
+
+// artworkOf selects the newest retained document for preview access.
+// An assessment failure can still have generated HTML; when the latest attempt
+// has none, the last judged observation supplies its retained artwork.
+function artworkOf(view: ConfigView): Run | undefined {
+  if (view.latest?.has_html) return view.latest
+  return view.latest_judged?.has_html ? view.latest_judged : undefined
 }
 
 // countsText summarises the strip header, matching upstream wording.
@@ -240,6 +272,9 @@ function show(id: string): void {
   })
 }
 
+// closeDialog removes the current modal and releases its selected artwork.
+// Native dialog cancellation uses this same cleanup so an escaped preview cannot
+// retain its source or scripts after the visible detail has closed.
 function closeDialog(): void {
   for (const id of ['config', 'settings', 'runs', 'detail']) {
     const element = document.getElementById(`intel-${id}`) as HTMLDialogElement | null
@@ -376,19 +411,33 @@ async function removeConfig(id: number): Promise<void> {
   })
 }
 
-function openHistory(view: ConfigView): void {
-  runs.value = [...view.history].reverse()
-  dialog.configId = view.config.id
-  dialog.kind = 'runs'
-  show('runs')
+// openHistory loads administrator observations including failed and unknown tasks.
+// The shared busy guard serializes dialog reads, and cancellation prevents a late
+// response from reopening history after its page has unmounted.
+async function openHistory(view: ConfigView): Promise<void> {
+  await run(async () => {
+    const response = await host.request<{ runs: Run[] }>('GET', `/admin/configs/${view.config.id}/runs`, {
+      signal: controller.signal,
+    })
+    if (controller.signal.aborted) return
+    runs.value = response.runs
+    dialog.configId = view.config.id
+    dialog.kind = 'runs'
+    show('runs')
+  })
 }
 
+// openRun loads an authorized observation and its retained document for detail.
+// Preview is selected for every successful read; cancelled requests leave the
+// current dialog unchanged and cannot recreate an unmounted page's frame.
 async function openRun(id: string): Promise<void> {
   await run(async () => {
     const path = admin.value ? `/admin/runs/${id}` : `/runs/${id}`
     const response = await host.request<RunDetail>('GET', path, { signal: controller.signal })
+    if (controller.signal.aborted) return
     detail.value = response.run
     documentSource.value = response.html ?? ''
+    artworkView.value = 'preview'
     dialog.kind = 'detail'
     show('detail')
   })
@@ -542,13 +591,13 @@ onBeforeUnmount(() => {
             :data-config-id="view.config.id"
           >
             <!-- artwork cell -->
-            <div class="in-art" :class="{ empty: !view.latest_judged?.has_html }">
+            <div class="in-art" :class="{ empty: !artworkOf(view) }">
               <button
-                v-if="view.latest_judged?.has_html"
+                v-if="artworkOf(view)"
                 type="button"
                 :aria-label="`查看 ${model.model} 的作品`"
-                @click="openRun(view.latest_judged!.id)"
-              ><span class="in-art-tag">HTML</span></button>
+                @click="openRun(artworkOf(view)!.id)"
+              ><ArtworkThumbnail :run-id="artworkOf(view)!.id" :title="`${model.model} 的作品预览`" /></button>
               <span v-else class="in-sub">无作品</span>
             </div>
             <!-- last verdict + active phase -->
@@ -571,7 +620,7 @@ onBeforeUnmount(() => {
               <span v-else class="in-sub">尚无记录</span>
             </div>
             <!-- history strip -->
-            <div>
+            <div class="in-history-panel">
               <div class="in-history-head">
                 <span>明确结论 {{ view.history.length }} 次</span>
                 <span>{{ countsText(view) }}</span>
@@ -581,6 +630,7 @@ onBeforeUnmount(() => {
             </div>
             <!-- actions -->
             <div class="in-row-actions">
+              <TrButton v-if="artworkOf(view)" :disabled="busy" @click="openRun(artworkOf(view)!.id)">HTML 预览</TrButton>
               <TrButton
                 :disabled="busy || view.active || !view.config.key_set || !view.config.enabled"
                 @click="runNow(view.config.id)"
@@ -594,6 +644,10 @@ onBeforeUnmount(() => {
               <span>{{ view.config.schedule_enabled ? `每 ${view.config.interval_minutes} 分钟` : '仅手动' }}</span>
               <span :class="{ 'in-danger': !view.config.key_set }">{{ view.config.key_set ? 'Key 已配置' : '缺少 Key' }}</span>
               <span v-if="!view.config.enabled">已停用</span>
+            </div>
+            <div v-if="!view.active && view.latest?.error_message" class="in-row-diagnostic">
+              <span>{{ view.latest.error_message }}</span>
+              <TrButton :disabled="busy" @click="openRun(view.latest!.id)">查看详情</TrButton>
             </div>
           </article>
         </div>
@@ -623,13 +677,13 @@ onBeforeUnmount(() => {
             class="in-obs-body"
             :class="{ 'is-active': view.active }"
           >
-            <div class="in-art" :class="{ empty: !view.latest_judged?.has_html }">
+            <div class="in-art" :class="{ empty: !artworkOf(view) }">
               <button
-                v-if="view.latest_judged?.has_html"
+                v-if="artworkOf(view)"
                 type="button"
                 :aria-label="`查看 ${model.model} 的作品`"
-                @click="openRun(view.latest_judged!.id)"
-              ><span class="in-art-tag">HTML</span></button>
+                @click="openRun(artworkOf(view)!.id)"
+              ><ArtworkThumbnail :run-id="artworkOf(view)!.id" :title="`${model.model} 的作品预览`" /></button>
               <span v-else class="in-sub">无作品</span>
             </div>
             <div class="in-verdict">
@@ -646,7 +700,7 @@ onBeforeUnmount(() => {
               <span v-if="view.latest_judged">{{ relativeText(observationTime(view.latest_judged)) }}</span>
               <span v-else class="in-sub">等待首次检测</span>
             </div>
-            <div>
+            <div class="in-history-panel">
               <div class="in-history-head">
                 <span>有效结果 {{ view.history.length }} 次</span>
                 <span>{{ countsText(view) }}</span>
@@ -654,7 +708,9 @@ onBeforeUnmount(() => {
               <HistoryStrip :runs="view.history" />
               <div class="in-history-axis"><span>较早</span><span>最近</span></div>
             </div>
-            <div />
+            <div class="in-row-actions">
+              <TrButton v-if="artworkOf(view)" :disabled="busy" @click="openRun(artworkOf(view)!.id)">HTML 预览</TrButton>
+            </div>
           </article>
         </div>
       </div>
@@ -837,20 +893,21 @@ onBeforeUnmount(() => {
         <div v-for="entry in runs" :key="entry.id" class="in-run">
           <span class="in-pill" :class="verdictTone[entry.verdict]">{{ verdictLabel[entry.verdict] }}</span>
           <div>
-            <b>{{ entry.verdict === 'error' ? (entry.error_message || '执行异常') : entry.verdict === 'unknown' ? (entry.error_message || '评价缺失或无法判定') : (entry.assessment_reason || '判定正常') }}</b>
+            <b>{{ historyMessage(entry) }}</b>
             <span>{{ fullText(observationTime(entry)) }} · {{ durationText(entry.duration_ms) }}</span>
           </div>
           <div class="in-run-stat">
             <template v-if="judged(entry)">首字 {{ durationText(entry.first_token_ms) }}<br>{{ tokenText(entry) }} tokens</template>
             <template v-else>{{ phaseLabel[entry.phase] ?? '—' }}</template>
           </div>
+          <TrButton :disabled="busy" @click="openRun(entry.id)">{{ entry.has_html ? 'HTML 预览' : '查看详情' }}</TrButton>
         </div>
       </div>
     </div>
   </dialog>
 
   <!-- Detail dialog -->
-  <dialog v-if="dialog.kind === 'detail'" id="intel-detail" class="in-dialog wide" @close="dialog.kind = ''">
+  <dialog v-if="dialog.kind === 'detail'" id="intel-detail" class="in-dialog wide" @close="closeDialog">
     <div class="in-dialog-head">
       <div><h2>检测详情</h2><p>{{ detail ? `${detail.model} · ${benchmarkLabel[detail.benchmark]}` : '' }}</p></div>
       <TrButton @click="closeDialog">关闭</TrButton>
@@ -877,8 +934,13 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="documentSource" class="in-section">
         <h3>作品</h3>
-        <p class="in-sub">模型返回的 HTML 是不可信内容，插件不内嵌渲染。复制或下载后，请在隔离环境中打开。</p>
-        <p class="in-prompt" style="margin-top:8px">{{ documentSource }}</p>
+        <div class="in-grow" style="margin-bottom:12px">
+          <TrButton :aria-pressed="artworkView === 'preview'" @click="artworkView = 'preview'">HTML 预览</TrButton>
+          <TrButton :aria-pressed="artworkView === 'source'" @click="artworkView = 'source'">查看源码</TrButton>
+        </div>
+        <HtmlPreview v-if="artworkView === 'preview'" :html="documentSource" :title="`${detail.model} 的 HTML 作品`" />
+        <pre v-else class="in-prompt">{{ documentSource }}</pre>
+        <p class="in-sub" style="margin-top:8px">作品在隔离画布内运行，外部资源和网络接口受到限制。</p>
       </div>
       <div v-else-if="detail && isActive(detail) === false" class="in-section">
         <p class="in-sub">该次检测没有保留作品，或作品已被保留规则清理。</p>

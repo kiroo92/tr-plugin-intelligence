@@ -14,13 +14,17 @@ import (
 	"time"
 )
 
-// remote.go talks to the Manxue tester. Creation submits a benchmark, polling
-// reads its progress, and both responses are reduced to allowlisted categories
-// before any text reaches storage or the panel.
+// remote.go submits benchmarks to Manxue, polls task progress, and classifies
+// gateway failures for storage and display. Candy creation carries the real
+// gateway URL and Key because the remote service calls the site itself. Drawing
+// creation carries a locally generated document with placeholder credentials
+// because the classifier receives completed artwork directly.
 //
-// Candy creation carries the real gateway URL and Key because the remote
-// service calls the site itself. Drawing creation carries a locally generated
-// document with placeholder credentials because nothing is called upstream.
+// Error envelopes can mix a generic HTTP category with a specific billing
+// reason. Subscription expiry and quota exhaustion take precedence over generic
+// permission or rate-limit wrappers so administrators see the action their Key
+// requires. Messages reaching storage come from a local allowlist; arbitrary
+// upstream details stay inside classification and are discarded after inspection.
 
 // remoteBaseURL is the fixed tester origin; tests replace it with a loopback
 // fixture through newRemoteClient.
@@ -40,16 +44,17 @@ var (
 
 // remoteErrorMessages binds each category to one fixed, safe sentence.
 var remoteErrorMessages = map[string]string{
-	"auth":            "模型接口鉴权失败，请检查检测 Key",
-	"permission":      "模型接口拒绝访问，请检查 Key 和模型权限",
-	"quota":           "模型接口余额或额度不足",
-	"rate_limit":      "模型接口请求受限，请稍后重试",
-	"timeout":         "模型接口请求超时",
-	"invalid_request": "模型接口不接受检测请求，请检查模型、协议和参数",
-	"model":           "模型不存在或不可用，请检查模型名称和分组支持范围",
-	"transport":       "检测服务无法连接模型接口",
-	"upstream":        "模型接口服务异常，请稍后重试",
-	"remote_error":    "检测服务报告执行失败，未提供可安全展示的具体原因",
+	"auth":                 "模型接口鉴权失败，请检查检测 Key",
+	"permission":           "模型接口拒绝访问，请检查 Key 和模型权限",
+	"subscription_expired": "检测 Key 所属订阅已过期，请续订或更换可用 Key",
+	"quota":                "模型接口余额或额度不足",
+	"rate_limit":           "模型接口请求受限，请稍后重试",
+	"timeout":              "模型接口请求超时",
+	"invalid_request":      "模型接口不接受检测请求，请检查模型、协议和参数",
+	"model":                "模型不存在或不可用，请检查模型名称和分组支持范围",
+	"transport":            "检测服务无法连接模型接口",
+	"upstream":             "模型接口服务异常，请稍后重试",
+	"remote_error":         "检测服务报告执行失败，未提供可安全展示的具体原因",
 }
 
 // remoteFailure carries a stable category and optional HTTP status. Its message
@@ -319,8 +324,14 @@ func classifyHTTP(response *http.Response) error {
 	return &remoteFailure{Category: category, Status: response.StatusCode, Retryable: retryableCategory(category)}
 }
 
-// inspectRemoteError walks the known error envelope. Suppliers nest the useful
-// fields one level down under "error", so both levels are inspected.
+// inspectRemoteError classifies a JSON error envelope and returns its joined
+// messages for local inspection. Callers discard those messages after classification
+// because their contents can contain credentials or other upstream details.
+//
+// Both the top level and a nested error object contribute codes, reasons, and
+// messages. Subscription expiry wins over quota, and both win over generic
+// wrappers. This keeps an HTTP 403 with SUBSCRIPTION_EXPIRED actionable while
+// retaining the actual HTTP status on the resulting remoteFailure.
 func inspectRemoteError(raw []byte) (string, string) {
 	var payload map[string]any
 	if json.Unmarshal(raw, &payload) != nil {
@@ -333,7 +344,7 @@ func inspectRemoteError(raw []byte) (string, string) {
 	var codes []string
 	var messages []string
 	for _, level := range levels {
-		for _, field := range []string{"code", "type", "status"} {
+		for _, field := range []string{"code", "type", "status", "reason"} {
 			if value, ok := level[field].(string); ok {
 				codes = append(codes, value)
 			}
@@ -347,11 +358,13 @@ func inspectRemoteError(raw []byte) (string, string) {
 	if text, ok := payload["error"].(string); ok {
 		messages = append(messages, text)
 	}
-	// A quota reason outranks a generic rate-limit wrapper, so every message is
-	// inspected before the reported codes decide the category.
-	for _, message := range messages {
-		if category := categoryFromMessage(message); category == "quota" {
-			return category, strings.Join(messages, " ")
+	// Subscription expiry and exhausted quota can arrive under a generic forbidden
+	// or rate-limit wrapper. Inspect both codes and messages before those wrappers.
+	for _, category := range []string{"subscription_expired", "quota"} {
+		for _, value := range append(codes, messages...) {
+			if categoryFromMessage(value) == category {
+				return category, strings.Join(messages, " ")
+			}
 		}
 	}
 	for _, code := range codes {
@@ -369,12 +382,16 @@ func inspectRemoteError(raw []byte) (string, string) {
 	return "", strings.Join(messages, " ")
 }
 
-// categoryFromMessage maps known phrases and codes to a category.
+// categoryFromMessage maps known phrases and codes to a safe diagnostic category.
+// Matching is case insensitive, and empty or unrecognized text returns an empty
+// category so callers can inspect other fields or use the HTTP status.
 func categoryFromMessage(value string) string {
 	text := strings.ToLower(value)
 	switch {
 	case strings.TrimSpace(text) == "":
 		return ""
+	case containsAny(text, "subscription_expired", "subscription expired", "subscription has expired", "订阅已过期", "订阅过期"):
+		return "subscription_expired"
 	case containsAny(text, "quota", "insufficient_quota", "billing", "余额", "额度"):
 		return "quota"
 	case containsAny(text, "rate_limit", "rate limit", "too many requests", "限流", "频率"):

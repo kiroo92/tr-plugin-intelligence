@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -19,6 +20,11 @@ import (
 	"github.com/TokenFlux/TokenRouter/plugin-sdk/go/plugintest"
 	"github.com/TokenFlux/TokenRouter/plugin-sdk/go/sdk"
 )
+
+// plugin_test.go exercises plugin initialization, protected panel routes, durable
+// observations, and retention through a temporary SQLite database and mock host.
+// Administrator diagnostics remain inspectable while user reads follow current
+// group authorization and quality histories contain definite judgments.
 
 // fixture builds an initialized plugin over a temporary data directory with a
 // deterministic group lookup and an address policy that accepts the local
@@ -561,6 +567,53 @@ func TestRunDetailAuthorization(t *testing.T) {
 	granted := fixture.request(t, http.MethodGet, "/runs/run-1", nil, userCaller())
 	if granted.Code != http.StatusOK {
 		t.Fatalf("authorized read = %d", granted.Code)
+	}
+}
+
+// TestAdminHistoryIncludesDiagnostics reproduces a failed request alongside a
+// judged result. Administrator history must expose both newest first, omit private
+// payloads, reject user callers, and leave the quality strip restricted to judgments.
+func TestAdminHistoryIncludesDiagnostics(t *testing.T) {
+	fixture := newFixture(t, strings.Repeat("k", masterKeyMinLength))
+	ctx := context.Background()
+	config := &Config{GroupID: 12, GroupName: "default", Model: "model-a", Benchmark: BenchmarkDrawing,
+		BaseURL: "https://relay.example.com/v1", Protocol: "responses", IntervalMinutes: 60}
+	id, err := fixture.plugin.insertConfig(ctx, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.ID = id
+	if _, err := fixture.plugin.db.ExecContext(ctx, `INSERT INTO runs
+		(id, config_id, group_id, model, benchmark, status, verdict, phase, html, remote_id, error_message, created_at, updated_at)
+		VALUES
+		('judged', ?, 12, 'model-a', 'drawing', 'succeeded', 'passed', 'complete', '<html>private-artifact</html>', 'private-remote', '', 1, 1),
+		('error', ?, 12, 'model-a', 'drawing', 'failed', 'error', 'complete', '', '', 'subscription expired', 2, 2)`, config.ID, config.ID); err != nil {
+		t.Fatal(err)
+	}
+	path := fmt.Sprintf("/admin/configs/%d/runs", config.ID)
+	response := fixture.request(t, http.MethodGet, path, nil, adminCaller())
+	if response.Code != http.StatusOK {
+		t.Fatalf("history = %d %s", response.Code, response.Body.String())
+	}
+	var body struct {
+		Runs []*Run `json:"runs"` // newest observation summaries
+	}
+	decode(t, response, &body)
+	if len(body.Runs) != 2 || body.Runs[0].ID != "error" || body.Runs[1].ID != "judged" {
+		t.Fatalf("history omitted or reordered diagnostic observations: %+v", body.Runs)
+	}
+	if !body.Runs[1].HasHTML || strings.Contains(response.Body.String(), "private-artifact") || strings.Contains(response.Body.String(), "private-remote") {
+		t.Fatal("history must advertise retained artwork while keeping payloads in authorized detail reads")
+	}
+	if denied := fixture.request(t, http.MethodGet, path, nil, userCaller()); denied.Code != http.StatusForbidden {
+		t.Fatalf("user history access = %d", denied.Code)
+	}
+	if missing := fixture.request(t, http.MethodGet, "/admin/configs/999/runs", nil, adminCaller()); missing.Code != http.StatusNotFound {
+		t.Fatalf("missing configuration history = %d", missing.Code)
+	}
+	view, err := fixture.plugin.buildConfigView(ctx, config)
+	if err != nil || len(view.History) != 1 || view.History[0].ID != "judged" {
+		t.Fatalf("quality history included a diagnostic: %+v, %v", view.History, err)
 	}
 }
 

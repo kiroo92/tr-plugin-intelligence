@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,11 @@ import (
 	"testing"
 	"time"
 )
+
+// remote_test.go exercises benchmark submission, result interpretation, and safe
+// error classification with local HTTP fixtures. Gateway credentials and arbitrary
+// upstream text stay outside public diagnostics, while billing failures retain
+// actionable categories and their observed HTTP status.
 
 // TestOutcomeMapping checks that execution state and judgement stay separate.
 // A failed or unknown result must never read as a degraded model.
@@ -122,6 +128,33 @@ func TestErrorClassification(t *testing.T) {
 	}
 	if got := categoryFromStatus(503); got != "upstream" {
 		t.Fatalf("status 503 classified as %q", got)
+	}
+}
+
+// TestSubscriptionExpiredClassification reproduces the gateway's HTTP 403 expiry
+// envelope under generic permission wrappers. The saved diagnostic must identify
+// the expired subscription, retain the status, discard raw text, and prevent retries.
+func TestSubscriptionExpiredClassification(t *testing.T) {
+	for _, raw := range []string{
+		`{"code":403,"reason":"SUBSCRIPTION_EXPIRED","message":"subscription has expired"}`,
+		`{"error":{"type":"forbidden","reason":"SUBSCRIPTION_EXPIRED"}}`,
+		`{"error":{"code":"permission_denied","message":"subscription has expired; private-details"}}`,
+	} {
+		response := &http.Response{StatusCode: http.StatusForbidden, Body: io.NopCloser(strings.NewReader(raw))}
+		err := classifyHTTP(response)
+		var failure *remoteFailure
+		if !errors.As(err, &failure) || failure.Category != "subscription_expired" || failure.Status != http.StatusForbidden {
+			t.Fatalf("expiry response classified as %v", err)
+		}
+		if failure.Retryable || isRetryable(err) {
+			t.Fatal("expired subscription must not consume another generation attempt")
+		}
+		if !strings.Contains(failure.Error(), "订阅已过期") || !strings.Contains(failure.Error(), "HTTP 403") {
+			t.Fatalf("unactionable expiry diagnostic: %s", failure.Error())
+		}
+		if strings.Contains(failure.Error(), "private-details") {
+			t.Fatal("upstream details leaked into the safe diagnostic")
+		}
 	}
 }
 

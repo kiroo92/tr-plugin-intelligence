@@ -1,5 +1,7 @@
-// types.ts mirrors the JSON shapes the plugin returns. Keeping them in one
-// place lets both pages share the same narrowing without a schema runtime.
+// types.ts describes configuration, observations, and retained artwork returned
+// by the plugin's JSON API. Both page audiences share these shapes, while
+// administrator history includes diagnostics and quality strips select only
+// observations with a definite verdict.
 
 export interface Config {
   id: number
@@ -87,8 +89,8 @@ export interface Settings {
 
 export interface RunDetail {
   run: Run
-  // html carries the saved document as text so the panel can offer a copy
-  // without rendering untrusted markup.
+  // html carries the saved document as text for the isolated preview, escaped
+  // source view, and download. The host application never inserts it into its DOM.
   html?: string
 }
 

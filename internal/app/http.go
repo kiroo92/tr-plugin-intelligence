@@ -14,14 +14,23 @@ import (
 	"github.com/TokenFlux/TokenRouter/plugin-sdk/go/sdk"
 )
 
-// http.go exposes the administrator and read-only user API. The host has
-// already authenticated each route; every handler re-checks the caller and
-// re-evaluates group authorization before returning any observation.
+// http.go exposes configuration management, administrator diagnostics, and
+// read-only user observations. The host authenticates each manifest route, and
+// the plugin checks the caller again before dispatch. User detail reads also
+// check current group authorization and the feature switch, so an earlier list
+// response does not grant continued access after permissions change.
+//
+// Quality histories contain definite judgments, while administrator history
+// includes retained errors, unknown results, and active work. That distinction
+// keeps infrastructure failures outside pass rates while making their causes
+// inspectable. List and history responses return summaries; authorized detail
+// reads carry saved HTML as JSON text for isolated previews or source downloads.
 
 // panelRoutes lists the local mux patterns. A trailing slash matches the whole
 // subtree, which is how the host's "/*" manifest routes arrive here.
 var panelRoutes = []string{
 	"GET /admin/configs",
+	"GET /admin/configs/",
 	"POST /admin/configs",
 	"PUT /admin/configs/",
 	"DELETE /admin/configs/",
@@ -96,16 +105,22 @@ func (plugin *Plugin) dbHandle() *sql.DB {
 	return plugin.db
 }
 
-// adminConfigItem handles edit and delete for one identifier.
+// adminConfigItem dispatches edits, deletion, and history for a positive configuration
+// identifier. History accepts a GET with the runs suffix; unsupported suffixes
+// and methods return a missing-route response before any configuration mutation.
 func (plugin *Plugin) adminConfigItem(ctx context.Context, writer http.ResponseWriter, request *http.Request, caller sdk.Caller, remainder string) {
 	parts := strings.Split(strings.Trim(remainder, "/"), "/")
-	if len(parts) != 1 {
+	if len(parts) != 1 && !(len(parts) == 2 && parts[1] == "runs" && request.Method == http.MethodGet) {
 		writeProblem(writer, http.StatusNotFound, "接口不存在")
 		return
 	}
 	id, err := strconv.ParseInt(parts[0], 10, 64)
 	if err != nil || id <= 0 {
 		writeProblem(writer, http.StatusBadRequest, "检测配置编号无效")
+		return
+	}
+	if len(parts) == 2 {
+		plugin.adminHistory(ctx, writer, id)
 		return
 	}
 	switch request.Method {
@@ -116,6 +131,34 @@ func (plugin *Plugin) adminConfigItem(ctx context.Context, writer http.ResponseW
 	default:
 		writeProblem(writer, http.StatusNotFound, "接口不存在")
 	}
+}
+
+// adminHistory returns recent observations for an existing administrator configuration.
+// It includes execution diagnostics alongside judged results, newest first, and
+// returns summaries so document bodies and private execution fields stay in detail reads.
+func (plugin *Plugin) adminHistory(ctx context.Context, writer http.ResponseWriter, id int64) {
+	plugin.mu.Lock()
+	defer plugin.mu.Unlock()
+	if plugin.db == nil {
+		writeProblem(writer, http.StatusServiceUnavailable, "插件已停止")
+		return
+	}
+	if _, err := plugin.getConfig(ctx, id); err != nil {
+		writeFailure(writer, err)
+		return
+	}
+	// Retention keeps sixty judgments, sixty diagnostics, and one possible active
+	// observation. Read all three together so recent errors remain available for troubleshooting.
+	runs, err := plugin.listRuns(ctx, id, historySlots*2+1)
+	if err != nil {
+		writeFailure(writer, err)
+		return
+	}
+	summaries := make([]*Run, 0, len(runs))
+	for _, run := range runs {
+		summaries = append(summaries, run.summary())
+	}
+	sdk.WriteJSON(writer, http.StatusOK, map[string]any{"runs": summaries})
 }
 
 // adminAction handles run-now for one configuration.
@@ -504,8 +547,8 @@ func (plugin *Plugin) runDetail(ctx context.Context, writer http.ResponseWriter,
 		_, _ = writer.Write([]byte(run.HTML))
 		return
 	}
-	// The document travels as escaped text so the panel never renders untrusted
-	// markup. The browser receives exactly the bytes that were saved.
+	// The document travels as escaped JSON text. The panel displays it inside an
+	// isolated iframe or source view, keeping model markup outside the application DOM.
 	sdk.WriteJSON(writer, http.StatusOK, map[string]any{"run": run, "html": run.HTML})
 }
 
