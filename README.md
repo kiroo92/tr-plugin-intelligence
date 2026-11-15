@@ -24,10 +24,12 @@
 推荐添加自建插件来源，启用后刷新发现页并安装「智商测试」。
 
 - 名称：智商测试 · kiroo92
-- 插件 ID：`kiroo92.intelligence`
+- 插件 ID：`moonup.intelligence`
 - 来源 URL：`https://github.com/kiroo92/tr-plugin-intelligence/releases/latest/download/index.json`
 - Ed25519 公钥：`/xRos0dV8zLsy9dHOxnpWeNXstJ988e/8v79AFqh8As=`
 - 发布页：https://github.com/kiroo92/tr-plugin-intelligence/releases
+
+用户页地址为 `/ext/moonup.intelligence`，管理页地址为 `/admin/ext/moonup.intelligence`，由插件声明的 ID 生成。v0.1.3 使用新的插件 ID，需要安装为 `moonup.intelligence`；已有旧 ID 安装的配置和历史不会自动转入，请停用旧安装后配置新安装。
 
 从 v0.1.2 起使用上述公钥。已有插件来源需先在宿主中替换 Ed25519 公钥，再刷新来源；来源 URL 保持不变。私钥保存在服务器用户配置目录，不进入仓库或发行包。
 

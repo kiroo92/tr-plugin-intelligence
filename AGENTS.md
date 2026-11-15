@@ -1,6 +1,7 @@
 # 智商测试正式插件
 
 - 独立仓库为 https://github.com/kiroo92/tr-plugin-intelligence，主分支 main。只在本目录提交，不包含工作区其它插件。
+- 插件 ID 固定为 `moonup.intelligence`，Vite 的 pluginId 与 manifest 保持一致。用户页为 `/ext/moonup.intelligence`，管理页为 `/admin/ext/moonup.intelligence`；只在插件内维护身份，页面地址使用宿主标准规则。
 - 最新公开版本以 GitHub Releases 为准。每个版本包含五平台 tar.gz、plugin.json、checksums.txt、icon.svg、index.json 及独立 index.json.sig；签名的公钥 `/xRos0dV8zLsy9dHOxnpWeNXstJ988e/8v79AFqh8As=` 与来源 URL 写在 README。签名私钥在服务器用户配置目录 `/root/.config/TokenRouter/plugin-signing/tr-plugin-intelligence.key`，禁止进入项目或发行包，需由维护者备份。
 - 功能只含站点定时检测与手动检测。**禁止恢复用户自测**：没有用户 Key 选择、没有 `source=user` 共享结果行、没有用户提交限流。用户页只读。用户已于 2026-11-15 明确取消该功能。
 - 设计来源是 `kiroo92/TokenRouter` 的 `backend/internal/intelligence`（`service.go`、`drawing.go`、`provider/`、`remote/result.go`）与 `frontend/src/views/{admin/IntelligenceTestsView,user/IntelligenceView}.vue`、`components/intelligence/`。布局照原站：分组卡片 + 固定模型列 + 观测行 + 60 格历史条 + 图例。原型见 `../intelligence-prototype/index.html`，本插件已是正式实现。
