@@ -1,0 +1,167 @@
+{
+  "schemaVersion": 1,
+  "id": "kiroo92.intelligence",
+  "version": "0.1.0",
+  "apiVersion": 1,
+  "minHostVersion": "0.7.3",
+  "name": {
+    "en": "IQ tests",
+    "zh": "智商测试"
+  },
+  "description": {
+    "en": "Scheduled site checks that record whether grouped models answer a benchmark correctly.",
+    "zh": "按分组定时检测站点模型，记录「满血 / 降智」结论。"
+  },
+  "publisher": {
+    "name": "kiroo92"
+  },
+  "license": "MIT",
+  "icon": "icon.svg",
+  "permissions": [
+    "catalog.read"
+  ],
+  "backend": {
+    "executable": "bin/plugin",
+    "routes": [
+      {
+        "method": "GET",
+        "path": "/admin/configs",
+        "auth": "admin",
+        "maxBodyBytes": 0,
+        "timeoutSeconds": 60
+      },
+      {
+        "method": "POST",
+        "path": "/admin/configs",
+        "auth": "admin",
+        "maxBodyBytes": 131072,
+        "timeoutSeconds": 60
+      },
+      {
+        "method": "PUT",
+        "path": "/admin/configs/*",
+        "auth": "admin",
+        "maxBodyBytes": 131072,
+        "timeoutSeconds": 60
+      },
+      {
+        "method": "DELETE",
+        "path": "/admin/configs/*",
+        "auth": "admin",
+        "maxBodyBytes": 0,
+        "timeoutSeconds": 60
+      },
+      {
+        "method": "POST",
+        "path": "/admin/actions/*",
+        "auth": "admin",
+        "maxBodyBytes": 0,
+        "timeoutSeconds": 60
+      },
+      {
+        "method": "GET",
+        "path": "/admin/runs/*",
+        "auth": "admin",
+        "maxBodyBytes": 0,
+        "timeoutSeconds": 60
+      },
+      {
+        "method": "GET",
+        "path": "/admin/settings",
+        "auth": "admin",
+        "maxBodyBytes": 0,
+        "timeoutSeconds": 60
+      },
+      {
+        "method": "PUT",
+        "path": "/admin/settings",
+        "auth": "admin",
+        "maxBodyBytes": 4096,
+        "timeoutSeconds": 60
+      },
+      {
+        "method": "GET",
+        "path": "/tests",
+        "auth": "user",
+        "maxBodyBytes": 0,
+        "timeoutSeconds": 60
+      },
+      {
+        "method": "GET",
+        "path": "/runs/*",
+        "auth": "user",
+        "maxBodyBytes": 0,
+        "timeoutSeconds": 60
+      }
+    ],
+    "tasks": [
+      {
+        "name": "tick",
+        "schedule": "@every 1m",
+        "timeoutSeconds": 30
+      }
+    ]
+  },
+  "frontend": {
+    "entry": "frontend/index.js",
+    "styles": [
+      "frontend/index.css"
+    ],
+    "pages": [
+      {
+        "id": "home",
+        "path": "",
+        "audience": "user",
+        "title": {
+          "en": "IQ tests",
+          "zh": "智商测试"
+        }
+      },
+      {
+        "id": "admin",
+        "path": "",
+        "audience": "admin",
+        "title": {
+          "en": "IQ test settings",
+          "zh": "智商测试配置"
+        }
+      }
+    ],
+    "menus": [
+      {
+        "page": "home",
+        "label": {
+          "en": "IQ tests",
+          "zh": "智商测试"
+        },
+        "icon": "frontend/menu.svg",
+        "order": 118
+      },
+      {
+        "page": "admin",
+        "label": {
+          "en": "IQ tests",
+          "zh": "智商测试"
+        },
+        "icon": "frontend/menu.svg",
+        "order": 118
+      }
+    ]
+  },
+  "config": {
+    "fields": [
+      {
+        "key": "credential_key",
+        "type": "secret",
+        "label": {
+          "en": "Credential master key",
+          "zh": "凭据主密钥"
+        },
+        "description": {
+          "en": "At least 32 characters. Encrypts every stored API Key; without it, saving keys and running checks is refused.",
+          "zh": "至少 32 个字符。用于加密各检测配置的 API Key；缺失时拒绝保存密钥与运行检测。"
+        }
+      }
+    ]
+  }
+}

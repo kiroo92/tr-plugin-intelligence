@@ -1,0 +1,5 @@
+dist/
+release/
+web/node_modules/
+*.private-key
+tr-release/
