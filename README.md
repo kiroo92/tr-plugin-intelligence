@@ -25,7 +25,15 @@
 
 - 名称：智商测试 · kiroo92
 - 插件 ID：`kiroo92.intelligence`
-- 目标宿主：支持 DataDir 的 kiroo92 分发 TokenRouter v0.7.3 及以上
+- 来源 URL：`https://github.com/kiroo92/tr-plugin-intelligence/releases/latest/download/index.json`
+- Ed25519 公钥：`OCWruhQ/1Sk2oGLZmJafmHOtNgVxdw8HUmjIh8xonhk=`
+- 发布页：https://github.com/kiroo92/tr-plugin-intelligence/releases
+
+索引附带独立的 `index.json.sig`；安装包使用固定版本下载地址并校验 SHA256。发布时先上传完整草稿、下载核对后公开；同版本资产不替换，更新应递增插件版本。
+
+也可从 GitHub Release 选择宿主平台对应的 `tar.gz`，通过宿主本地安装入口安装。此项目不自动部署、不上传官方市场。
+
+- 目标宿主：支持 DataDir 的 kiroo92 分发 TokenRouter v0.7.3 及以上；其它分发的相同版本号不代表支持 DataDir。
 
 Go 依赖沿用现有插件的方式：require 公开 SDK `v0.2.1`，通过版本化 replace 使用
 `github.com/kiroo92/TokenRouter-plugin-data/plugin-sdk/go v0.3.0`。Web SDK 固定 `0.2.0`。
